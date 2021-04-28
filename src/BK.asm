@@ -8,7 +8,15 @@ __config	0x3f72
            ;****************************
            ;* Раздел описания констант *
            ;****************************
+;english lcd charset
+#define LCD_ENGLISH
 
+;use custom lcd characters
+#define USE_CUSTOM_CHARS
+	   
+;skip temperatures screen
+#define SKIP_TEMP_SCREEN
+	   
 ; total distance (for eeprom saving)
 #define TOTAL_KM	.297876
 
@@ -19,10 +27,10 @@ __config	0x3f72
 #define PULSES_PER_KM	.16000
 
 ; reset daily distance (km) (A)
-#define RESET_DAILY_ODO	    .1000
+#define MAX_COUNTER_A    .1000
 
 ; reset daily distance (km) (B)
-#define RESET_DAILY_B_ODO   .5000
+#define MAX_COUNTER_B   .5000
 
 ; show average fuel consumption after total consumption of AVERAGE_MIN_FUEL * 0,01 litres
 #define AVERAGE_MIN_FUEL .50
@@ -39,11 +47,6 @@ __config	0x3f72
 ; voltmeter constant
 #define VOLT_CONSTANT .174
 
-;use custom lcd characters
-#define USE_CUSTOM_CHARS
-
-;disable temperatures screen
-#define NO_TEMP_SCREEN
 
 ; use proteus simulator (no eeprom and fix for switch off injector)
 ;#define PROTEUS_SIM
@@ -65,6 +68,7 @@ __config	0x3f72
 ;lcd counter A/B mode modes count
 #define LCD_AB_MODE_COUNT .2
     
+
 	   
 ;=================================================
 ; ОСНОВНЫЕ РЕГИСТРЫ
@@ -336,11 +340,8 @@ EEADR_LAST		equ 0x120	; конечный адрес блока для чтени
 #define		skipSpaces  fFLAGS_REG4,2	; выравнивание по левому краю (пропуск пробелов)
 #define		button_OK1L fFLAGS_REG4,3	; длинное нажатие кнопки 1
 #define		button_OK2L fFLAGS_REG4,4	; длинное нажатие кнопки 2
-
-#define		tButton_OK1L fFLAGS_REG1,0	; флаг для обработки длительного нажатия кнопки 1
-#define		tButton_OK2L fFLAGS_REG4,5	; флаг для обработки длительного нажатия кнопки 2
-
-#define		timer01sec	fFLAGS_REG4,6	; флаг 0,1 сек (для расчета среднего напряжения за 0,1 сек)
+#define		timer01sec  fFLAGS_REG4,5	; флаг 0,1 сек (для расчета среднего напряжения за 0,1 сек)
+#define		skipTemp    fFLAGS_REG4,6	; пропуск температурного экрана (при отсутствии датчиков)
 
 #define		ON_PWR	    PORTA,0 		; выход отключения питания
 #define		CONTROL_PWR PORTA,1			; Вход контроля питания
@@ -606,9 +607,8 @@ PR_B25
 	bsf		FL100_in
 	
 PR_B21
-
-
 	; обработка основного одометра
+#ifdef OBSOLETE
 	decfsz	odo_01Ltemp,f
 	goto	_odo01_end
 	decfsz	odo_01Htemp,f	
@@ -620,8 +620,33 @@ PR_B21
 	movwf	odo_01Ltemp
 	btfss	STATUS,Z	; если нижний байт не равен 0 увеличим верхний бай на 1
 	incf	odo_01Htemp,f	; (необходимое условие для декремента счетчиков)
+#else
+	; increment temp odo_01
+	incf	odo_01Ltemp
+	btfsc	STATUS,Z
+	incf	odo_01Htemp
 
-	bsf		ODOM_FL2	; установим флаг пройденного километра
+	; compare with pulses per km (ODO_CON1)
+	;X - ODO_CON1, Y - odo01temp
+	movf	ODO_CON1H,w
+	subwf	odo_01Htemp,w
+	btfss	STATUS,C	;X>Y..zc,X<Y..zC,X=Y..ZC
+	goto	_odo01_end	;result: X>Y
+	btfss	STATUS,Z
+	goto	_odo01_then	;result: Y>X
+	movf	ODO_CON1L,w
+	subwf	odo_01Ltemp,w
+	btfss	STATUS,C	;X>Y..zc,X<Y..zC,X=Y..ZC
+	goto	_odo01_end	;result: X>Y
+	;btfss	STATUS,Z
+	;goto	Yisgreater	;result: Y>X
+	;goto	XequY	;result: X=Y
+_odo01_then
+	clrf	odo_01Htemp
+	clrf	odo_01Ltemp
+#endif
+	bsf	ODOM_FL2	; установим флаг пройденного километра
+
 _odo01_end
 
 	; счетчик суточного пробега А
@@ -631,23 +656,7 @@ _odo01_end
 	incf	odo_00Htemp
 
 	; compare with pulses per km (ODO_CON1)
-#ifdef OBSOLETE
-	movf	ODO_CON1L,w   		;move low byte of constant to wreg
-	subwf	odo_00Ltemp,w		;subtract low bytes
-    
-	movf	ODO_CON1H,w			;move high byte of constant to wreg
-	btfss   STATUS,C			;borrow from the low bytes subtraction?
-	addlw   .1					;yes, add one
-	subwf   odo_00Htemp,w		;subtract high bytes
-    
-	btfss   STATUS,C			;skip if odo_00 >= ODO_CON1  (no borrow)
-	goto    _odo00_end			;goto if odo_00 <  ODO_CON1  (has borrow)
-#else	
-	;Written by Martin Viteznik, jsem () einstein ddot cz
-	;this routine compares two unsigned 16-bit values,	
-	;X and Y. The H-byte is hbyte(X|y) etc. :-)
 	;X - ODO_CON1, Y - odo00temp
-
 	movf	ODO_CON1H,w
 	subwf	odo_00Htemp,w
 	btfss	STATUS,C	;X>Y..zc,X<Y..zC,X=Y..ZC
@@ -657,11 +666,11 @@ _odo01_end
 	movf	ODO_CON1L,w
 	subwf	odo_00Ltemp,w
 	btfss	STATUS,C	;X>Y..zc,X<Y..zC,X=Y..ZC
-	goto	_odo00_end ;result: X>Y
+	goto	_odo00_end	;result: X>Y
 	;btfss	STATUS,Z
 	;goto	Yisgreater	;result: Y>X
 	;goto	XequY	;result: X=Y
-#endif
+
 _odo00_then	
 	clrf	odo_00Htemp
 	clrf	odo_00Ltemp
@@ -671,11 +680,11 @@ _odo00_then
 	btfsc	STATUS,Z
 	incf	odo_00H
 
-	; zero odo_00 when greater than RESET_DAILY_ODO
-	movlw	low RESET_DAILY_ODO
+	; zero odo_00 when greater than MAX_COUNTER_A
+	movlw	low MAX_COUNTER_A
 	subwf   odo_00L,w
     
-	movlw   high RESET_DAILY_ODO
+	movlw   high MAX_COUNTER_A
 	btfss   STATUS,C
 	addlw   .1
 	subwf   odo_00H,w
@@ -695,22 +704,6 @@ _odo00_end
 	incf	odo_00Htemp_B
 
 	; compare with pulses per km (ODO_CON1)
-#ifdef OBSOLETE
-	BANK0
-	movf	ODO_CON1L,w   		;move low byte of constant to wreg
-	BANK1
-	subwf	odo_00Ltemp_B,w		;subtract low bytes
-    
-	BANK0
-	movf	ODO_CON1H,w			;move high byte of constant to wreg
-	BANK1
-	btfss   STATUS,C			;borrow from the low bytes subtraction?
-	addlw   .1					;yes, add one
-	subwf   odo_00Htemp_B,w		;subtract high bytes
-    
-	btfss   STATUS,C			;skip if odo_00 >= ODO_CON1  (no borrow)
-	goto    _odo00_B_end		;goto if odo_00 <  ODO_CON1  (has borrow)
-#else
 	;X - ODO_CON1, Y - odo00temp_B
 	BANK0
 	movf	ODO_CON1H,w
@@ -729,7 +722,6 @@ _odo00_end
 	;btfss	STATUS,Z
 	;goto	Yisgreater	;result: Y>X
 	;goto	XequY	;result: X=Y
-#endif
 _odo00_B_then
 	clrf	odo_00Htemp_B
 	clrf	odo_00Ltemp_B
@@ -739,11 +731,11 @@ _odo00_B_then
 	btfsc	STATUS,Z
 	incf	odo_00H_B
 
-	; zero odo_00_B when greater than RESET_DAILY_B_ODO
-	movlw	low RESET_DAILY_B_ODO
+	; zero odo_00_B when greater than MAX_COUNTER_B
+	movlw	low MAX_COUNTER_B
 	subwf   odo_00L_B,w
     
-	movlw   high RESET_DAILY_B_ODO
+	movlw   high MAX_COUNTER_B
 	btfss   STATUS,C
 	addlw   .1
 	subwf   odo_00H_B,w
@@ -883,11 +875,11 @@ _skip_injtime_check
 #endif
 
 
-	decfsz S_fCOUNTER,f
+	decfsz	S_fCOUNTER,f
 	goto	PR_T2
 	movlw	.20
 	movwf	S_fCOUNTER
-	bsf		SEC2_OK
+	bsf	SEC2_OK
 
 ;	единица измерения временных счетчиков - 2 секунды
 ;	если установлен либо флаг движения, либо флаг работы мотора (т.к. в режиме принудительного х/х форсунки не работают)
@@ -969,7 +961,7 @@ PR_T12_1
 PR_T2	
 	btfss	PIR1,TMR2IF
 	goto	PR_end
-	bcf		PIR1,TMR2IF
+	bcf	PIR1,TMR2IF
 
 	incf	TAHO_L,f
 	btfsc	STATUS,Z
@@ -983,10 +975,9 @@ PR_T2
 	movwf	TAHO_L
 	movwf	TAHO_H
 
-	BANK1		        	;выбор банка 1
-	bsf		OPTION_REG,5	; выключаем счетчик TMR0
-	BANK0		        	;выбор банка 0
-
+	BANK1		        ;выбор банка 1
+	bsf	OPTION_REG,5	; выключаем счетчик TMR0
+	BANK0		        ;выбор банка 0
 
 ;-------Завершение обработки прерывания-----------------------
 
@@ -1023,19 +1014,19 @@ _menu_position	set	0
 	menu_item   menu_daily		    ; пробег, расход
 	goto	LCD_MODE2
 
-#ifndef NO_TEMP_SCREEN
+#ifndef	SKIP_TEMP_SCREEN
 	menu_item   menu_temp		    ; температура
 	goto	LCD_MODE3
 #endif
 
-	menu_item   menu_voltage	    ; ср. скор., вольтметр (тек., мин., макс.)
-	goto	LCD_MODE17	
-
 	menu_item   menu_counter_A	    ; пробег А
-	goto	LCD_MODE18_A
+	goto	LCD_MODE18_A	
 
 	menu_item   menu_counter_B	    ; пробег B
 	goto	LCD_MODE18_B
+
+	menu_item   menu_voltage	    ; ср. скор., вольтметр (тек., мин., макс.)
+	goto	LCD_MODE17	
 
 	menu_item   menu_clock		    ; часы расширенно
 	goto	LCD_MODE4
@@ -1105,8 +1096,8 @@ main:
 	call	ALL_TEMP 	; считывание температуры через 30 сек.
 
 	callp	ADC_VOLT	; измерение напряжения
-	pageselw $
 
+	pageselw $
 	call	scan		; сканирование клавиатуры
 	call 	SCANP		; проверка зажигания	
 	
@@ -1114,6 +1105,12 @@ main:
 	btfsc	TIME_FL
 	goto	main1
 
+	movf	prev_menu,W
+	btfsc	STATUS,Z
+	goto	main12
+	movwf	menu_position
+	goto	main11
+main12
 	movlw	max_menu_motor
 	incf	menu_position,F
 	btfsc	MOTOR_FL
@@ -1123,6 +1120,8 @@ _max_menu_compare
 	subwf	menu_position,W
 	btfsc	STATUS,C
 	clrf	menu_position	
+main11
+	clrf	prev_menu
 	bcf	button_OK1
 	bcf	button_OK2
 	bcf	button_OK1L
@@ -1137,16 +1136,16 @@ main3
 	goto	main		; обновляем экран через 2 сек
 
 	btfsc	DRIVE_FL
-	call	CALC_SPEED	
+	call	CALC_SPEED	; расчет максимальной скорости
 
 	gotop	MENU_SELECT
 	
 main2	
-	bcf		button_OK1
-	bcf		button_OK2
+	bcf	button_OK1
+	bcf	button_OK2
 
-	bcf		DRIVE_FL
-	bcf		MOTOR_FL
+	bcf	DRIVE_FL
+	bcf	MOTOR_FL
 
 	goto 	main
 
@@ -1197,7 +1196,7 @@ CALC_SPEED
 	addlw   .1
 	subwf   speedH,w	
     
-	btfss   STATUS,C			;skip if speed >= speed_max
+	btfss   STATUS,C		;skip if speed >= speed_max
 	goto    _speed_max_end		;goto if speed <  speed_max
 	movf	speedL,w
 	movwf	speedLmax
@@ -1249,13 +1248,13 @@ scan
 	subwf	key1_counter,w
 	btfss	STATUS,Z
 	goto	_scan14
-	bsf		button_OK1L
+	bsf	button_OK1L
 	movlw	LONGKEY_TIME + .1
 	movwf	key1_counter
 	btfss	ZUMER_ON,0
 	goto	_scan14
-	bsf		FL_zumer
-	bsf		FL_zumerВ1	
+	bsf	FL_zumer
+	bsf	FL_zumerВ1	
 _scan14
 	return	
 _scan12
@@ -1263,7 +1262,7 @@ _scan12
 	btfsc	button1	
 	return
 ; кнопка нажата
-	bsf		button_FL1
+	bsf	button_FL1
 	clrf	key1_counter
 	goto 	_scan1_end
 scan1
@@ -1275,16 +1274,16 @@ scan1
 	subwf	key1_counter,w
 	btfsc	STATUS,C
 	goto	_scan13
-	bsf		button_OK1
+	bsf	button_OK1
 	call	LCD_CLEAR 	; затираем экран
-	bsf		SEC2_OK
+	bsf	SEC2_OK
 _scan15
 	btfss	ZUMER_ON,0
 	goto	_scan13
-	bsf		FL_zumer
-	bsf		FL_zumerВ1	
+	bsf	FL_zumer
+	bsf	FL_zumerВ1	
 _scan13
-	bcf		button_FL1
+	bcf	button_FL1
 _scan1_end
 
 	btfsc	button2
@@ -1296,13 +1295,13 @@ _scan1_end
 	subwf	key2_counter,w
 	btfss	STATUS,Z
 	goto	_scan24
-	bsf		button_OK2L
+	bsf	button_OK2L
 	movlw	LONGKEY_TIME + .1
 	movwf	key2_counter
 	btfss	ZUMER_ON,0
 	goto	_scan24
-	bsf		FL_zumer
-	bsf		FL_zumerВ1	
+	bsf	FL_zumer
+	bsf	FL_zumerВ1	
 _scan24
 	return	
 _scan22
@@ -1322,16 +1321,16 @@ scan2
 	subwf	key2_counter,w
 	btfsc	STATUS,C
 	goto	_scan23
-	bsf		button_OK2
+	bsf	button_OK2
 	call	LCD_CLEAR 	; затираем экран
-	bsf		SEC2_OK
+	bsf	SEC2_OK
 _scan25
 	btfss	ZUMER_ON,0
 	goto	_scan23
-	bsf		FL_zumer
-	bsf		FL_zumerВ1	
+	bsf	FL_zumer
+	bsf	FL_zumerВ1	
 _scan23
-	bcf		button_FL2
+	bcf	button_FL2
 _scan2_end
 
 	return
@@ -1562,12 +1561,6 @@ LCD_MODE1
 	BANK0
 _skip_button_OK2
 
-	btfss	button_OK2L			;вход в режим разгон до 100
-	goto	_skip_long_button2
-	bcf	button_OK2L
-	bsf	tButton_OK2L
-	
-_skip_long_button2
 	btfss	DRIVE_FL
 	goto	_no_drive_fl
 
@@ -1624,7 +1617,7 @@ m1
 
 ; ---------------режим ХХ------------
 m2	
-	btfsc	tButton_OK2L	;вход в режим разгон до 100
+	btfsc	button_OK2L	;вход в режим разгон до 100
 	goto	mode1_lb
 
 ;	call	LCD_CLEAR
@@ -1701,7 +1694,7 @@ m3_21
 	call	LCD_SPACE
 	call	LCD_SPACE
 
-	goto	main2
+	goto	_m3_2
 m3_2
 ; температура за бортом
 	clrf	PCLATH
@@ -1711,12 +1704,14 @@ m3_2
 	movlw	0xC0
 	bsf	PCLATH,3	; страница памяти 1
 	call	LCD_TEMP
+_m3_2
+	bcf	button_OK2L
 	goto	main2
 
 mode1_lb
 	movlw	menu_100_confirm
 	movwf	menu_position
-	bcf	tButton_OK2L
+	bcf	button_OK2L
 	bsf	SEC2_OK	
 	call	LCD_CLEAR
 	movlw	.30
@@ -1889,6 +1884,7 @@ _lcd_mode_18_skip_button_OK2
 	bsf	SEC2_OK	
 	call	LCD_CLEAR
 	goto	main3
+
 _lcd_mode_18_skip_long_button
 ;	слово пробег A/B
 	movlw	0x7F
@@ -2067,6 +2063,8 @@ TO_MODE_TIME
 
 LCD_MODE3 ; температура
 ;	call	LCD_CLEAR
+	btfsc	skipTemp	; пропуск экрана темепратур при отсутствии датчиков
+	goto	_skip_lcd_mode3		
 	bsf	PCLATH,3	; страница памяти 1
 	movlw 0x89
 	call	LCD_VOLT
@@ -2103,29 +2101,28 @@ LCD_MODE3 ; температура
 	movlw 0xCC
 	bsf	PCLATH,3	; страница памяти 1
 	call	LCD_TEMP2
-
 	goto	main2
-
+_skip_lcd_mode3
+	bsf	SEC2_OK
+	goto	main12
+	
 LCD_MODE17 ; макс. скорость, напряжение (тек., мин., макс.)
 ;	call	LCD_CLEAR
 
 	btfsc	button_OK2
 	goto	mode17_lb
 
-	;movlw	0x80
-	;call	LCD_AVERAGE_SPEED	; средняя скорость
-
 	pageselw LCD_KMH_MAX
 	movlw	0x80
-	call	LCD_KMH_MAX			; максимальная скорость
+	call	LCD_KMH_MAX	; максимальная скорость
 	
 	movlw	0x80 - .1
 	movwf	LCD_PLACE
-	callp	SLOVO29			;max
+	callp	SLOVO29		;max
 
 	pageselw LCD_VOLT
 	movlw	0x89
-	call	LCD_VOLT			; текущее напряжение
+	call	LCD_VOLT	; текущее напряжение
 
 	pageselw LCD_VOLT_MIN
 	movlw	0xBF
@@ -2133,7 +2130,7 @@ LCD_MODE17 ; макс. скорость, напряжение (тек., мин.,
 
 	movlw 	0xBF
 	movwf	LCD_PLACE
-	callp	SLOVO28			;min
+	callp	SLOVO28		;min
 
 	pageselw LCD_VOLT_MAX
 	movlw	0xC9
@@ -2141,16 +2138,18 @@ LCD_MODE17 ; макс. скорость, напряжение (тек., мин.,
 
 	movlw 	0xC9
 	movwf	LCD_PLACE
-	callp	SLOVO29			;max
+	callp	SLOVO29		;max
 
 	goto	main2
 
 mode17_lb
 ;	call	LCD_CLEAR
+	movf	menu_position,w
+	movwf	prev_menu		; previous menu position
 	movlw	menu_voltage_reset
 	movwf	menu_position
-	bcf		button_OK2
-	bsf		SEC2_OK	
+	bcf	button_OK2
+	bsf	SEC2_OK	
 	goto	main3
 
 LCD_MODE4
@@ -2160,9 +2159,9 @@ LCD_MODE4
 	goto	MODE41
 	btfsc	button_OK2
 	goto	mode4_lb
-	bsf	PCLATH,3	; страница памяти 1
-	call	TIME_R	; чтение данных из таймера
-	bcf	PCLATH,3	; страница памяти 0
+	bsf	PCLATH,3    ; страница памяти 1
+	call	TIME_R	    ; чтение данных из таймера
+	bcf	PCLATH,3    ; страница памяти 0
 
 MODE41
 	movlw	0x7F
@@ -2257,7 +2256,11 @@ TIME21
 	callp	MONTH_SELECT
 
 time11	
+#ifdef	LCD_ENGLISH
+	movlw	0x27
+#else
 	movlw	0xE7
+#endif
 	btfss	ZUMER_ON,6
 	movlw	0x27	
 	call 	LCD_		; знак '
@@ -2339,7 +2342,7 @@ LCD_TIME3
 
 TIME31
 	prv_wi	R1
-	call 	LCD			; десятки дней
+	call 	LCD		; десятки дней
 	prv_w	R1
 	call 	LCD_INCPLACE	; единицы дней
 
@@ -2659,49 +2662,59 @@ LCD_CLEAR
 
 ;***********************************************************************************
 ALL_TEMP ; подпрограмма опроса температурных датчиков
+	movlw	.3
+	movwf	_tmp
 	bcf	fTIMER_FL
-	bsf	PCLATH,3		; страница памяти 1
-	movlw	h'30'			; адрес младшего байта в EEPROM 1 датчик
+	bsf	PCLATH,3	; страница памяти 1
+	movlw	h'30'		; адрес младшего байта в EEPROM 1 датчик
 	call	Set_ROM
 	call	READ_TEMP
-	bcf	PCLATH,3		; страница памяти 0
+	bcf	PCLATH,3	; страница памяти 0
 	btfss	CRC_OK		; если флаг установлен - данные верны
-	goto	NEXT1	
+	goto	_NEXT1	
 	bcf	STATUS,IRP
-	movlw h'A0'
-	movwf FSR
+	movlw	h'A0'
+	movwf	FSR
 	call	SAVE_T
-
+	goto	NEXT1
+_NEXT1	decf	_tmp,f
 NEXT1	call	tm4100
-	bsf	PCLATH,3		; страница памяти 1	
-	movlw	h'38'			; адрес младшего байта в EEPROM 2 датчик
+	bsf	PCLATH,3	; страница памяти 1	
+	movlw	h'38'		; адрес младшего байта в EEPROM 2 датчик
 	call	Set_ROM
 	call	READ_TEMP
-	bcf	PCLATH,3		; страница памяти 0
+	bcf	PCLATH,3	; страница памяти 0
 	btfss	CRC_OK
-	goto	NEXT2
-	movlw h'A2'
-	movwf FSR
+	goto	_NEXT2
+	movlw	h'A2'
+	movwf	FSR
 	call	SAVE_T
-
-NEXT2 call	tm4100
-	bsf	PCLATH,3		; страница памяти 1	
-	movlw	h'40'			; адрес младшего байта в EEPROM 3 датчик
+	goto	_NEXT2
+_NEXT2	decf	_tmp,f	
+NEXT2	call	tm4100
+	bsf	PCLATH,3	; страница памяти 1	
+	movlw	h'40'		; адрес младшего байта в EEPROM 3 датчик
 	call	Set_ROM
 	call	READ_TEMP
-	bcf	PCLATH,3		; страница памяти 0
+	bcf	PCLATH,3	; страница памяти 0
 	btfss	CRC_OK
-	return
-	movlw h'A4'
-	movwf FSR
+	goto	_NEXT3
+	movlw	h'A4'
+	movwf	FSR
 	call	SAVE_T
 	btfss	ZUMER_ON,1
+	goto	NEXT3
+_NEXT3	decf	_tmp,f	
+NEXT3	bcf	skipTemp
+	movf	_tmp,w
+	btfsc	STATUS,Z
+	bsf	skipTemp
 	return
-				 ; проверяем температуру двигателя на предмет перегрева
+				; проверяем температуру двигателя на предмет перегрева
 	BANK1
 	btfsc	TEMPER3_H,7	; если значение отрицательно - выходим
 	goto	Z10
-	movlw 0x04	; 102 градуса
+	movlw	0x04		; 102 градуса
 	subwf	TEMPER3_H,w
 	btfss	STATUS,C
 	goto	Z10
@@ -2716,16 +2729,16 @@ Z10	BANK0
 SAVE_T
 	movf	fTEMPER_L,w
 	movwf	INDF
-	incf FSR,f
+	incf	FSR,f
 	movf	fTEMPER_H,w
 	movwf	INDF
 	return
 
 READ_T
-	movf  INDF,w
+	movf	INDF,w
 	movwf	R3	
-	incf FSR,f
-	movf  INDF,w
+	incf	FSR,f
+	movf	INDF,w
 	movwf	R4
 	return
 
@@ -3189,145 +3202,6 @@ INIT_TIMER
 i2c_delay	macro
 	goto	$+1
 	endm
-;==============================================================================================
-
-#ifdef OBSOLETE
-TIME_R				; подпрограмма считывания таймера
-
-	bsf		time_OK
-	clrf	EE_ADR
-	CALL	DSTIME_READ_BYTE
-	btfsc	EE_DATA,7	; проверка лояльности часов
-	call	INIT_TIMER
-	
-tmr2	
-	incf	EE_ADR,f
-	CALL	DSTIME_READ_BYTE
-	movwf	MINUTES
-
-	incf	EE_ADR,f
-	CALL	DSTIME_READ_BYTE
-	movwf	HOURS
-
-	incf	EE_ADR,f
-	CALL	DSTIME_READ_BYTE
-	movwf	DAY
-
-	incf	EE_ADR,f
-	CALL	DSTIME_READ_BYTE
-	movwf	DATE
-
-	incf	EE_ADR,f
-	CALL	DSTIME_READ_BYTE
-	movwf	MONTH	
-
-	incf	EE_ADR,f
-	CALL	DSTIME_READ_BYTE
-	movwf	YEAR
-
-	return
-;=====================================================================================
-
-TIME_W				; подпрограмма записи таймера
-	clrf	EE_ADR
-	clrf	EE_DATA
-	CALL	DSTIME_SAVE_BYTE 	;0 секунды
-
-	INCF	EE_ADR,F
-	movf	MINUTES,w
-	movwf	EE_DATA
-	CALL	DSTIME_SAVE_BYTE	;1 минуты
-
-	INCF	EE_ADR,F
-	movf	HOURS,w
-	movwf	EE_DATA
-	CALL	DSTIME_SAVE_BYTE	;2 часы
-
-	INCF	EE_ADR,F
-	movf	DAY,w
-	movwf	EE_DATA
-	CALL	DSTIME_SAVE_BYTE	;3 день недели
-
-	INCF	EE_ADR,F
-	movf	DATE,w
-	movwf	EE_DATA
-	CALL	DSTIME_SAVE_BYTE	;4 дата
-
-	INCF	EE_ADR,F
-	movf	MONTH,w
-	movwf	EE_DATA
-	CALL	DSTIME_SAVE_BYTE	;5 месяц
-
-	INCF	EE_ADR,F
-	movf	YEAR,w
-	movwf	EE_DATA
-	CALL	DSTIME_SAVE_BYTE	;6 год
-
-	return
-
-INIT_TIMER
-	clrf	MINUTES
-	movlw	0x12
-	movwf	HOURS
-	movlw	0x03
-	movwf	DAY
-	movlw	0x23
-	movwf	DATE
-	movlw	0x09
-	movwf	MONTH
-	movlw	0x20
-	movwf	YEAR
-	call	TIME_W
-
-	MOVLW	b'10010000'
-	MOVWF	EE_DATA
-	CALL	DSTIME_SAVE_BYTE	;7
-
-	RETURN 
-; 	чтение байта 
-; 	адрес в EE_ADR
-; 	результат в EE_DATA
-DSTIME_READ_BYTE
-	call  	i2c_start
-	movlw	0xD0
-   	movwf	_i2c_byte 		; control байт с битом WR
-    call	i2c_write
-	btfss	time_OK
-	return
-    movf 	EE_ADR,W
-    movwf	_i2c_byte   	; байт адреса памяти
-    call 	i2c_write		; 
- 	btfss	time_OK
-	return
-    call  	i2c_restart;
-	movlw	0xD1
-    movwf	_i2c_byte    	; control байт с битом RD
-    call  	i2c_write
-	btfss	time_OK
-	return
-    call  	i2c_read
-    call  	i2c_stop
-    movf 	_i2c_byte,W
-    movwf 	EE_DATA
-	return
-;==============================================================================================
-; 	запись байта
-; 	адрес в EE_ADR
-; 	данные в EE_DATA
-DSTIME_SAVE_BYTE
-	call  	i2c_start
-	movlw	0xD0
-	movwf	_i2c_byte;        ; control байт с битом WR
-    call	i2c_write
-   	movf	EE_ADR,W
-    movwf	_i2c_byte         ; младший байт адреса памяти
-    call	i2c_write  
-    movf	EE_DATA,W
-    movwf	_i2c_byte         ; записываемые данные
-    call	i2c_write              
-    call	i2c_stop
-	return
-#endif
 
 ;==============================================================================================
 i2c_restart
@@ -4640,7 +4514,11 @@ LCD_FUEL			; показываем общий расход 5 знаков ххх.
 	prv_wi	R2
 	call 	LCD_INCPLACE
 
+#ifdef LCD_ENGLISH
+	movlw	_l
+#else
 	movlw	л
+#endif
 	btfss	ZUMER_ON,6
 	movlw	_l		
 	call 	LCD_
@@ -5744,31 +5622,33 @@ _init
 	movlw	0x10
 	movwf	PCLATH
 
+#ifdef OBSOLETE
 	movf	odo_01Htemp,w
 	btfss	STATUS,Z	
 	goto	_odo01_end1
 	movf	odo_01Ltemp,w
 	btfss	STATUS,Z
 	goto	_odo01_end1
-							; если счетчик равен 0
-	movf	ODO_CON1H,w		; загрузим в предварительный счетчик 
+				; если счетчик равен 0
+	movf	ODO_CON1H,w	; загрузим в предварительный счетчик 
 	movwf	odo_01Htemp 	; исходное значение
 	movf	ODO_CON1L,w
 	movwf	odo_01Ltemp
-	btfss	STATUS,Z		; если нижний байт не равен 0 увеличим верхний бай на 1
+	btfss	STATUS,Z	; если нижний байт не равен 0 увеличим верхний бай на 1
 	incf	odo_01Htemp,f	; (необходимое условие для декремента счетчиков)
 _odo01_end1
+#endif
 
 	; если установлен флаг сигнала ТО счетчиков
 	; проверим их значение и если выше предела
 	; покажем и озвучим
-	clrf	PCLATH			; страница памяти 0
+	clrf	PCLATH		; страница памяти 0
 	btfss	ZUMER_ON,2
 	return
-	btfss	button1 	;если входим в сервис, то пропускаем
+	btfss	button1 	; если входим в сервис, то пропускаем
 	return
 
-	clrf	R7			; регистр для передачи параметра
+	clrf	R7		; регистр для передачи параметра
 	
 	pageselw $
 ; счетчик моточасов
@@ -5780,11 +5660,11 @@ _odo01_end1
 	btfss   STATUS,C
 	addlw   .1
 	subwf   mh_H,w
-    BANK0
+	BANK0
 
 	btfss   STATUS,C
 	goto    _mh_compare_end
-	bsf		R7,7
+	bsf	R7,7
 _mh_compare_end
 
 	movlw	.8
@@ -5801,13 +5681,13 @@ _mh_compare_end
 	movf	odo_S1H,w
 	movwf	R3
 	call	div_16		; R1:R0 = R3:R2 / R5:R4
-						; В R3:R2 остаток.
+				; В R3:R2 остаток.
 	movlw	TO_1
 	movwf	FSR
 	movf	INDF,w	
 	subwf	R0,w
 	btfsc	STATUS,C	; если результат вычитания не отрицательный C=1
-	bsf		R7,1		; установим флаг
+	bsf	R7,1		; установим флаг
 
 ; счетчик 2
 	movf	odo_S2L,w
@@ -5815,13 +5695,13 @@ _mh_compare_end
 	movf	odo_S2H,w
 	movwf	R3
 	call	div_16		; R1:R0 = R3:R2 / R5:R4
-						; В R3:R2 остаток.
+				; В R3:R2 остаток.
 	movlw	TO_2
 	movwf	FSR
 	movf	INDF,w	
 	subwf	R0,w
 	btfsc	STATUS,C	; если результат вычитания не отрицательный C=1
-	bsf		R7,2		; установим флаг
+	bsf	R7,2		; установим флаг
 
 
 ; счетчик 3
@@ -5830,13 +5710,13 @@ _mh_compare_end
 	movf	odo_S3H,w
 	movwf	R3
 	call	div_16		; R1:R0 = R3:R2 / R5:R4
-						; В R3:R2 остаток.
+				; В R3:R2 остаток.
 	movlw	TO_3
 	movwf	FSR
 	movf	INDF,w	
 	subwf	R0,w
 	btfsc	STATUS,C	; если результат вычитания не отрицательный C=1
-	bsf		R7,3		; установим флаг
+	bsf	R7,3		; установим флаг
 
 ; счетчик 4
 	movf	odo_S4L,w
@@ -5844,13 +5724,13 @@ _mh_compare_end
 	movf	odo_S4H,w
 	movwf	R3
 	call	div_16		; R1:R0 = R3:R2 / R5:R4
-						; В R3:R2 остаток.
+				; В R3:R2 остаток.
 	movlw	TO_4
 	movwf	FSR
 	movf	INDF,w	
 	subwf	R0,w
 	btfsc	STATUS,C	; если результат вычитания не отрицательный C=1
-	bsf		R7,4		; установим флаг
+	bsf	R7,4		; установим флаг
 
 	clrf	PCLATH
 	movf	R7,w
@@ -5880,7 +5760,7 @@ _save_bytes_1
 
 SAVE	
 	bcf	INTCON,GIE	; глобальное запрещение прерывания 
-	bcf		STATUS,IRP
+	bcf	STATUS,IRP
 	BANK3
 	btfsc	EECON1,WR
 	goto	$-1
@@ -7626,27 +7506,37 @@ MDAY	macro	start,len
 	return
 	endm
 
+#ifdef LCD_ENGLISH
+day1
+	MDAY	0x24,0x06	
+day2	
+	MDAY	0x2a,0x07
+day3	
+	MDAY	0x31,0x09
+day4	
+	MDAY	0x3a,0x08	
+day5	
+	MDAY	0x42,0x06	
+day6	
+	MDAY	0x48,0x08
+day7	
+	MDAY	0x50,0x06	
+#else
 day1
 	MDAY	0x24,0x0b	
-
 day2	
 	MDAY	0x2f,0x07
-
 day3	
 	MDAY	0x36,0x05
-
 day4	
 	MDAY	0x3B,0x07	
-
 day5	
 	MDAY	0x42,0x07	
-
 day6	
 	MDAY	0x49,0x07
-
 day7	
 	MDAY	0x50,0x0b	
-
+#endif
 ;=====================================================================================
 SLOVO1				; сброс?	
 	movlw 	0x84		
@@ -7669,16 +7559,28 @@ SLOVO3_1				; моточасы двиг
 SLOVO3				; масло двигателя /АКПП		
 	movlw 	0x80	
 	movwf	LCD_PLACE
+#ifdef LCD_ENGLISH
+	MSLOVO_XXX 0xAF,0x03
+#else
 	MSLOVO_XXX 0xAF,0x05
+#endif
 	pageselw $
 	incf	LCD_PLACE,f
 	return
 
 SLOVO3_ENGINE			; масло двигателя	
+#ifdef LCD_ENGLISH
+	MSLOVO_XXX 0xA3,0x06
+#else
 	MSLOVO_YYY 0x6D,0x09
+#endif
 	return
 SLOVO3_AKPP			; масло АКПП		
+#ifdef LCD_ENGLISH
+	MSLOVO_XXX 0xB3,0x04
+#else
 	MSLOVO_XXX 0xB5,0x04
+#endif
 	return
 
 ;=====================================================================================
@@ -7726,12 +7628,20 @@ SLOVO11	; зум.
 	return
 ;=====================================================================================
 SLOVO12	; тахометр
+#ifdef LCD_ENGLISH
+	MSLOVO_YYY	0x81, 0x09
+#else
 	MSLOVO_YYY	0x81, 0x08
+#endif
 	return
 
 ;=====================================================================================
 SLOVO13	; скорость
+#ifdef LCD_ENGLISH
+	MSLOVO_YYY	0x8b, 0x05
+#else
 	MSLOVO_YYY	0x89, 0x08
+#endif
 	return
 ;=====================================================================================
 SLOVO14	; кнопок
@@ -7985,6 +7895,68 @@ SLOVO_YYY
 
 
 ;================= 
+#ifdef LCD_ENGLISH
+	org 0x1E00
+table_2
+	movf	_tmp,w
+	addwf	PCL,f
+	dt	_j,_a,_n,_f,_e,_b,_m,_a,_r,_a,_p,_r,_m,_a,_y,_j,_u,_n ;0-11
+	dt	_j,_u,_l,_a,_u,_g,_s,_e,_p,_o,_c,_t,_n,_o,_v,_d,_e,_c ;12-23
+	dt	_m,_o,_n,_d,_a,_y ;24-29
+	dt	_t,_u,_e,_s,_d,_a,_y ;2A-30
+	dt	_w,_e,_d,_n,_e,_s,_d,_a,_y ;31-39
+	dt	_t,_h,_u,_r,_s,_d,_a,_y ;3A-41
+	dt	_f,_r,_i,_d,_a,_y ;42-47
+	dt	_s,_a,_t,_u,_r,_d,_a,_y ;48-4F
+	dt	_s,_u,_n,_d,_a,_y,_SPACE,_SPACE,_SPACE,_SPACE,_SPACE ;50-55
+	dt	_r,_e,_s,_e,_t,_QUEST ;5B-60
+	dt	_c,_o,_r,_r,_e,_c,_t,_i,_n,_QUEST ;61-6A
+	dt	_t,0x27,_e,_n,_g,_i,_n,_e,_SPACE,_SPACE,_SPACE ;6B-75
+	dt	_m,_e,_a,_s,_u,_r,_i,_n,_g ;76-7E
+	dt	_C,_O ;7F-80
+	dt	_t,_a,_c,_h,_o,_m,_e,_t,_r,_SPACE ;81-8a
+	dt	_s,_p,_e,_e,_d,_SPACE ;8b-90
+	dt	_a,_c,_c,_e,_l,_QUEST,_SPACE ;91-97
+	dt	_r,_e,_v,0xE9,_l,_SLASH,_h,_l,_SLASH,0xA1 ;98-A1
+	dt	_SPACE,_w,_a,_i,_t,_i,_n,_g,_SPACE,_s,_t,_a,_r,_t,_SPACE ;A2-B0
+	dt	_SPACE,_SPACE,_r,_e,_s,_u,_l,_t,_SPACE ;B1-B9
+	dt	_d,_u,_a,_l,_SPACE,_i,_n,_j,_POINT,_SPACE,_SPACE ;BА-С4
+	dt	0x37,_POINT,_e,_n,_g,_i,_n,_e,_SPACE,_h,_o,_u,_r,_s,_SPACE,_SPACE ;C5-D4
+	dt	_m,_SLASH,_h; D5-D7
+	dt	0x31,0x32,_POINT,_U,а ; D8-DC
+	dt	_GREATER; DD
+	dt	_LOWER; DE
+
+;================= 
+	org 0x1F00
+table_1
+	movf	_tmp,w
+	addwf	PCL,f
+	dt	_s,_p,_a,_r,_k ;0-4
+	dt 	_s,_n,_d,_SPACE,_k,_e,_y,_s,_SPACE,_SPACE ;5-0E
+	dt	_t,0x27,_e,_n,_g,_n,_POINT ;0F-15
+	dt	_SPACE,_O,_N,_O,_F,_F ;16-2B
+	dt	_t,_POINT,_s,_e,_n,_s,_o,_r ;1C-23
+	dt	_D,_S,0x31,0x38,_b,0x32,0x30 ;24-2A
+	dt	_D,_S,0x31,0x38,_s,0x32,0x30 ;2B-31
+	dt	_T,_O ;32-33
+	dt	_m,_o,_n,_i,_t,_o,_r,_L,_C,_D,_V,_L,_I ;34-40
+	dt	_S,_E,_R,_V,_I,_C,_E,_SPACE,_SPACE,_SPACE,_SPACE ;41-4B
+	dt	0x31,_POINT,_F,_U,_E,_L,_SPACE,_c,_o,_n,_s,_t,_a,_n,_t,_SPACE ;4C-5B
+	dt	0x32,_POINT,_V,_S,_S	;5С-60
+	dt	0x33,_POINT,_t,_o,_t,_a,_l,_SPACE,_t,_r,_i,_p,_SPACE,_SPACE	;61-6E
+	dt	0x34,_POINT,_s,_e,_t,_t,_i,_n,_g,_s,_SPACE,_b,_i,_t,_s,_SPACE	;6F-7E
+	dt	0x35,_POINT,_f,_u,_e,_l,_SPACE,_c,_a,_p,_a,_c,_i,_t	;7F-8C
+	dt	0x36,_POINT,_s,_e,_n,_s,_o,_r,_s,_SPACE,_i,_n,_s,_t,_a,_l	;8D-9C
+	dt	0x38,_POINT,_o,_i,_l,_SPACE,_e,_n,_g,_i,_n,_e,_SPACE,_T,_O,_SPACE	;9D-AC
+	dt	0x39,_POINT,_o,_i,_l,_SPACE,_g,_e,_a,_r,_SPACE,_T,_O,_SPACE,_SPACE	;AD-BB
+	dt	0x31,0x30,_POINT,_a,_i,_r,_SPACE,_f,_i,_l,_t,_e,_r,_SPACE,_T,_O	;BC-CB
+	dt	0x31,0x31,_POINT,_s,_p,_a,_r,_k,_SPACE,Т,О	;CC-D6
+	dt	_I,_N,_O,_U,_T ;D7-DB
+	dt	_e,_r,_r,_o,_r,_SPACE,_r,_e,_a,_d,_i,_n,_g	;DC-E8
+	dt	0x30,0x30,0x30,_k,_m,_SLASH,_h	;E9-EF
+	dt	_A,_T,_T,_E,_N,_T,_I,_O,_N,_s,_e,_c	;F0-FB
+#else
 	org 0x1E00
 table_2
 	movf	_tmp,w
@@ -8045,7 +8017,7 @@ table_1
 	dt	о,ш,и,б,к,а,_SPACE,ч,т,е,н,и,zz	;DC-E8
 	dt	0x30,0x30,0x30,к,м,_SLASH,ч	;E9-EF
 	dt	В,Н,И,М,А,Н,И,Е,0x21,с,е,к	;F0-FB
-
+#endif
 ;------------------------------------------------------------------------------------------------------------
 
 de24	macro num
@@ -8063,18 +8035,18 @@ de16	macro num
 #define REAL_EEPROM
 #ifdef REAL_EEPROM
 	org 	0x2100
-	de	0x04,0x8C,0xB7,0x00,0x47,0x01,0x23,0x01		; 0x00
-	de	0x23,0x01,0x23,0x01,0x23,0x03,0xD4,0x12
-	de	0x80,0x58,0x7D,0x1F,0xE6,0x6D,0x3E,0x80		; 0x10
+	de	0x04,0x92,0x7D,0x01,0xF9,0x06,0x94,0x06		; 0x00
+	de	0x94,0x06,0x94,0x06,0x94,0x1C,0x86,0x07
+	de	0x6C,0x46,0x17,0x35,0xBB,0x70,0x3E,0x80		; 0x10
 	de	0x60,0x3F,0x0A,0x28,0x0A,0x0A,0xAB,0xFF
 	de	0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF		; 0x20
 	de	0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF
 	de	0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF		; 0x30
 	de	0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF
 	de	0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF		; 0x40
-	de	0x00,0x13,0xB9,0x06,0x18,0x00,0x0A,0x00
-	de	0x00,0x01,0x1F,0x2E,0x77,0x0E,0x54,0x32		; 0x50
-	de	0x6D,0x00,0x4B,0x70,0xFF,0xFF,0xFF,0xFF
+	de	0x00,0x9E,0x67,0x04,0x9A,0x00,0x43,0x00
+	de	0x00,0x01,0x21,0x1D,0xC5,0x11,0x2B,0x55		; 0x50
+	de	0x28,0x00,0x60,0xD0,0x00,0xFF,0xFF,0xFF
 #else
 #ifndef PROTEUS_SIM
 	org 	0x2100
