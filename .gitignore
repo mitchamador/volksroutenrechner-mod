@@ -1,4 +1,15 @@
+proteus/*/
 proteus/*.pdsbak
 proteus/*.workspace
-trip-computer.X/*
 out/*
+nbproject/Makefile-local-*.mk
+nbproject/*.properties
+nbproject/*.bash
+nbproject/private/*
+build/*
+dist/*
+debug/*
+*.mcw
+*.mcs
+src/BK.*
+!src/BK.asm
